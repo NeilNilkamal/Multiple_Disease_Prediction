@@ -6,6 +6,8 @@ from datetime import datetime
 import pandas as pd
 import sqlite3 # Import for SQLite database
 import uuid # For generating unique IDs
+import uuid
+from datetime import datetime, timedelta # Import datetime and timedelta
 from streamlit_cookies_controller import CookieController # For managing browser cookies
 
 # --- Page Configuration ---
@@ -35,7 +37,6 @@ def get_db_connection():
     conn.commit()
     return conn
 
-# --- Initialize or Retrieve User UUID ---
 # --- Initialize or Retrieve User UUID ---
 def get_user_session_uuid():
     """
