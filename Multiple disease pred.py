@@ -131,7 +131,7 @@ with st.sidebar:
                              'Heart Disease Prediction',
                              'Parkinsons Prediction',
                              'Prediction History',
-                             'Health Resources'], # Added Health Resources
+                             'Health Tips (General)'], # Added Health Resources
                             menu_icon='hospital-fill',
                             icons=['house', 'activity', 'heart', 'person', 'bar-chart-line', 'book'], # Added 'book' icon
                             default_index=0)
@@ -153,9 +153,9 @@ if selected == 'Home':
 
 
 # --- Diabetes Prediction Page ---
-elif selected == 'Diabetes Prediction':
+elif selected == 'Diabetes':
 
-    st.title('Diabetes Prediction using ML')
+    st.title('Diabetes Prediction')
 
     diabetes_input_keys = ['Pregnancies_D', 'Glucose_D', 'BloodPressure_D', 'SkinThickness_D',
                            'Insulin_D', 'BMI_D', 'DiabetesPedigreeFunction_D', 'Age_D']
@@ -225,9 +225,9 @@ elif selected == 'Diabetes Prediction':
 
 
 # --- Heart Disease Prediction Page ---
-elif selected == 'Heart Disease Prediction':
+elif selected == 'Heart Disease':
 
-    st.title('Heart Disease Prediction using ML')
+    st.title('Heart Disease Prediction')
 
     heart_input_keys = ['age_hd_D', 'sex_hd_D', 'cp_hd_D', 'trestbps_hd_D', 'chol_hd_D',
                         'fbs_hd_D', 'restecg_hd_D', 'thalach_hd_D', 'exang_hd_D',
@@ -308,9 +308,9 @@ elif selected == 'Heart Disease Prediction':
             clear_form_inputs(heart_input_keys)
 
 # --- Parkinson's Prediction Page ---
-elif selected == "Parkinsons Prediction":
+elif selected == "Parkinson's":
 
-    st.title("Parkinson's Disease Prediction using ML")
+    st.title("Parkinson's Disease Prediction")
 
     parkinsons_input_keys = ['fo_P', 'fhi_P', 'flo_P', 'Jitter_percent_P', 'Jitter_Abs_P',
                              'RAP_P', 'PPQ_P', 'DDP_P','Shimmer_P', 'Shimmer_dB_P', 'APQ3_P', 'APQ5_P',
@@ -556,7 +556,7 @@ elif selected == 'Prediction History':
             st.info(f"No prediction history available for {disease_to_show} yet. Make some predictions first!")
 
 # --- Health Resources and Tips Page ---
-elif selected == 'Health Resources':
+elif selected == 'Health Tips (General)':
     st.title('General Health Resources and Tips')
     st.write("Here you'll find general information and tips to help maintain a healthy lifestyle and understand more about the diseases this app focuses on. Remember, this information is not a substitute for professional medical advice.")
     
