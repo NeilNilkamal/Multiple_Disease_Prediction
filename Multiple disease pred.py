@@ -44,7 +44,16 @@ def get_user_session_uuid():
     and sets it as a cookie. Stores it in session_state for easy access.
     """
     controller = CookieController()
-    session_uuid = controller.get("user_health_app_uuid") # Use a specific cookie name
+    
+    # Check if the cookie exists using 'in' operator or by trying to get it safely
+    # The 'streamlit_cookies_controller' might be designed to always raise KeyError if not found
+    # So, we'll wrap the access in a try-except block, which is robust.
+    session_uuid = None
+    try:
+        session_uuid = controller.get("user_health_app_uuid")
+    except KeyError:
+        # The cookie doesn't exist, so we'll generate a new one
+        pass # session_uuid will remain None, triggering the if not session_uuid block
 
     if not session_uuid:
         session_uuid = str(uuid.uuid4()) # Generate a new unique ID
@@ -54,9 +63,6 @@ def get_user_session_uuid():
         
         # Set the cookie using the 'expires' argument with a datetime object
         controller.set("user_health_app_uuid", session_uuid, expires=expires_date)
-        
-        # st.session_state.user_uuid = session_uuid # Store in session_state for current run
-    # Else, if session_uuid was retrieved from cookie, it's already set.
     
     # Always store in session_state so it's readily available throughout the current session
     st.session_state.user_uuid = session_uuid 
