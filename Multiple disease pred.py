@@ -4,31 +4,101 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from datetime import datetime
 import pandas as pd
+import sqlite3 # Import for SQLite database
+import uuid # For generating unique IDs
+import uuid
+from datetime import datetime, timedelta # Import datetime and timedelta
+from streamlit_cookies_controller import CookieController # For managing browser cookies
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Health Assistant",
-                   layout="wide",
-                   page_icon="🧑‍⚕️")
+                    layout="wide",
+                    page_icon="🧑‍⚕️")
 
 # --- Get the working directory ---
 working_dir = os.path.dirname(os.path.abspath(__file__))
 
-# --- Define history file path ---
-HISTORY_FILE = os.path.join(working_dir, 'history_data.pkl')
+# --- SQLite Database Setup ---
+DB_FILE = os.path.join(working_dir, 'health_history.db')
 
-# --- Function to load/save history data ---
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'rb') as f:
-            return pickle.load(f)
-    return {'Diabetes': [], 'Heart Disease': [], 'Parkinsons': []}
+def get_db_connection():
+    """Establishes a connection to the SQLite database and creates the table if it doesn't exist."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS user_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_uuid TEXT NOT NULL,
+            disease_type TEXT NOT NULL,
+            inputs TEXT, -- Store inputs as JSON string
+            prediction_result TEXT,
+            timestamp TEXT
+        )
+    ''')
+    conn.commit()
+    return conn
 
-def save_history(data):
-    with open(HISTORY_FILE, 'wb') as f:
-        pickle.dump(data, f)
+# --- Initialize or Retrieve User UUID ---
+def get_user_session_uuid():
+    """
+    Retrieves a unique UUID from browser cookies. If not found, generates a new one
+    and sets it as a cookie. Stores it in session_state for easy access.
+    """
+    controller = CookieController()
+    session_uuid = controller.get("user_health_app_uuid") # Use a specific cookie name
 
-# Load existing history data
-history_data = load_history()
+    if not session_uuid:
+        session_uuid = str(uuid.uuid4()) # Generate a new unique ID
+        
+        # Calculate expiry date for 90 days from now
+        expires_date = datetime.now() + timedelta(days=90)
+        
+        # Set the cookie using the 'expires' argument with a datetime object
+        controller.set("user_health_app_uuid", session_uuid, expires=expires_date)
+        
+        # st.session_state.user_uuid = session_uuid # Store in session_state for current run
+    # Else, if session_uuid was retrieved from cookie, it's already set.
+    
+    # Always store in session_state so it's readily available throughout the current session
+    st.session_state.user_uuid = session_uuid 
+    return session_uuid
+
+# Ensure UUID is generated/retrieved at the start of every session
+# Call this once at the top level to ensure the UUID is available
+current_user_uuid = get_user_session_uuid()
+# st.sidebar.write(f"Your session ID: {current_user_uuid[:8]}...") # Optional: for debugging
+
+# --- Modified History Functions to interact with SQLite ---
+def load_history(user_uuid):
+    """Loads prediction history for a specific user UUID from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT disease_type, inputs, prediction_result, timestamp FROM user_predictions WHERE session_uuid = ? ORDER BY timestamp DESC",
+        (user_uuid,)
+    )
+    history_records = cursor.fetchall()
+    conn.close()
+
+    history_list = []
+    for record in history_records:
+        history_list.append({
+            "Disease": record[0],
+            "Inputs": eval(record[1]) if record[1] else {}, # Convert string back to dict, handle empty
+            "Result": record[2],
+            "Timestamp": pd.to_datetime(record[3])
+        })
+    return history_list
+
+def save_history(user_uuid, disease_type, inputs, prediction_result):
+    """Saves a new prediction record for a specific user UUID to the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO user_predictions (session_uuid, disease_type, inputs, prediction_result, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (user_uuid, disease_type, str(inputs), prediction_result, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
 
 # --- Loading the saved ML models ---
 try:
@@ -44,8 +114,6 @@ except FileNotFoundError:
 # --- Function to clear form inputs ---
 def clear_form_inputs(keys):
     for key in keys:
-        # Check if the key exists in session_state before trying to delete
-        # This prevents errors if a key wasn't initialized (e.g., if user didn't interact with it)
         if key in st.session_state:
             del st.session_state[key]
     st.rerun() # Rerun to clear the inputs on the UI
@@ -53,27 +121,27 @@ def clear_form_inputs(keys):
 # --- Sidebar for navigation ---
 with st.sidebar:
     selected = option_menu('Multiple Disease Prediction System',
-                           ['Home', # Added Home as the first option
-                            'Diabetes Prediction',
-                            'Heart Disease Prediction',
-                            'Parkinsons Prediction',
-                            'Prediction History'],
-                           menu_icon='hospital-fill',
-                           icons=['house', 'activity', 'heart', 'person', 'bar-chart-line'], # Added 'house' icon for Home
-                           default_index=0)
+                            ['Home',
+                             'Diabetes Prediction',
+                             'Heart Disease Prediction',
+                             'Parkinsons Prediction',
+                             'Prediction History',
+                             'Health Resources'], # Added Health Resources
+                            menu_icon='hospital-fill',
+                            icons=['house', 'activity', 'heart', 'person', 'bar-chart-line', 'book'], # Added 'book' icon
+                            default_index=0)
 
 # --- Home Page ---
 if selected == 'Home':
     st.title('Health Assistant')
     st.write("Welcome to your personal Health Assistant! This application helps you predict the likelihood of certain diseases based on your input parameters.")
     st.write("Navigate through the sidebar to access different prediction models or to view your past prediction history.")
-    # st.image(os.path.join(working_dir, 'health_banner.jpg'), use_column_width=True, caption="Your Health, Our Priority") # Optional: Add an image if you have one. Replace 'health_banner.jpg' with your image file path.
     st.markdown("---")
     st.markdown("### How to Use:")
     st.markdown("- Select a disease prediction from the sidebar.")
     st.markdown("- Enter the required health parameters accurately.")
     st.markdown("- Click 'Test Result' to get your prediction.")
-    st.markdown("- Your predictions are automatically saved to 'Prediction History' for future reference.")
+    st.markdown("- Your predictions are automatically saved to 'Prediction History' for future reference on *this device/browser*.")
     st.markdown("- You can download your history data and outcome summaries in the 'Prediction History' tab.")
     st.markdown("---")
     st.warning("Disclaimer: This application is for informational and educational purposes only. It is not intended to provide medical advice, diagnosis, or treatment. Always consult with a qualified healthcare professional for any health concerns.")
@@ -84,7 +152,6 @@ elif selected == 'Diabetes Prediction':
 
     st.title('Diabetes Prediction using ML')
 
-    # Define input keys for clearing (make sure these match the 'key' argument in st.number_input/selectbox)
     diabetes_input_keys = ['Pregnancies_D', 'Glucose_D', 'BloodPressure_D', 'SkinThickness_D',
                            'Insulin_D', 'BMI_D', 'DiabetesPedigreeFunction_D', 'Age_D']
 
@@ -121,10 +188,19 @@ elif selected == 'Diabetes Prediction':
     with col_btn1:
         if st.button('Diabetes Test Result', help="Click to get prediction"):
             try:
-                user_input = [Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin,
-                              BMI, DiabetesPedigreeFunction, Age]
+                user_input_dict = { # Store inputs as a dictionary for easier saving/retrieval
+                    'Pregnancies': Pregnancies,
+                    'Glucose': Glucose,
+                    'BloodPressure': BloodPressure,
+                    'SkinThickness': SkinThickness,
+                    'Insulin': Insulin,
+                    'BMI': BMI,
+                    'DiabetesPedigreeFunction': DiabetesPedigreeFunction,
+                    'Age': Age
+                }
+                user_input_list = list(user_input_dict.values()) # Convert to list for model
 
-                diab_prediction = diabetes_model.predict([user_input])
+                diab_prediction = diabetes_model.predict([user_input_list])
 
                 if diab_prediction[0] == 1:
                     diab_diagnosis = 'The person is diabetic'
@@ -133,23 +209,8 @@ elif selected == 'Diabetes Prediction':
                 
                 st.success(diab_diagnosis)
 
-                # --- Store prediction history ---
-                history_entry = {
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'inputs': {
-                        'Pregnancies': Pregnancies,
-                        'Glucose': Glucose,
-                        'BloodPressure': BloodPressure,
-                        'SkinThickness': SkinThickness,
-                        'Insulin': Insulin,
-                        'BMI': BMI,
-                        'DiabetesPedigreeFunction': DiabetesPedigreeFunction,
-                        'Age': Age
-                    },
-                    'result': diab_diagnosis
-                }
-                history_data['Diabetes'].append(history_entry)
-                save_history(history_data)
+                # --- Store prediction history in DB ---
+                save_history(st.session_state.user_uuid, 'Diabetes', user_input_dict, diab_diagnosis)
 
             except Exception as e:
                 st.error(f"Please check your input values or ensure they are within a reasonable range. An error occurred: {e}")
@@ -163,7 +224,6 @@ elif selected == 'Heart Disease Prediction':
 
     st.title('Heart Disease Prediction using ML')
 
-    # Define input keys for clearing
     heart_input_keys = ['age_hd_D', 'sex_hd_D', 'cp_hd_D', 'trestbps_hd_D', 'chol_hd_D',
                         'fbs_hd_D', 'restecg_hd_D', 'thalach_hd_D', 'exang_hd_D',
                         'oldpeak_hd_D', 'slope_hd_D', 'ca_hd_D', 'thal_hd_D']
@@ -216,9 +276,15 @@ elif selected == 'Heart Disease Prediction':
     with col_btn1:
         if st.button('Heart Disease Test Result', help="Click to get prediction"):
             try:
-                user_input = [age, sex, cp, trestbps, chol, fbs, restecg, thalach, exang, oldpeak, slope, ca, thal]
+                user_input_dict = {
+                    'age': age, 'sex': sex, 'cp': cp, 
+                    'trestbps': trestbps, 'chol': chol, 'fbs': fbs, 
+                    'restecg': restecg, 'thalach': thalach, 'exang': exang, 
+                    'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal
+                }
+                user_input_list = list(user_input_dict.values())
 
-                heart_prediction = heart_disease_model.predict([user_input])
+                heart_prediction = heart_disease_model.predict([user_input_list])
 
                 if heart_prediction[0] == 1:
                     heart_diagnosis = 'The person is having heart disease'
@@ -227,19 +293,8 @@ elif selected == 'Heart Disease Prediction':
                 
                 st.success(heart_diagnosis)
 
-                # --- Store prediction history ---
-                history_entry = {
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'inputs': {
-                        'age': age, 'sex': sex, 'cp': cp, 
-                        'trestbps': trestbps, 'chol': chol, 'fbs': fbs, 
-                        'restecg': restecg, 'thalach': thalach, 'exang': exang, 
-                        'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal
-                    },
-                    'result': heart_diagnosis
-                }
-                history_data['Heart Disease'].append(history_entry)
-                save_history(history_data)
+                # --- Store prediction history in DB ---
+                save_history(st.session_state.user_uuid, 'Heart Disease', user_input_dict, heart_diagnosis)
 
             except Exception as e:
                 st.error(f"Please check your input values or ensure they are within a reasonable range. An error occurred: {e}")
@@ -252,7 +307,6 @@ elif selected == "Parkinsons Prediction":
 
     st.title("Parkinson's Disease Prediction using ML")
 
-    # Define input keys for clearing
     parkinsons_input_keys = ['fo_P', 'fhi_P', 'flo_P', 'Jitter_percent_P', 'Jitter_Abs_P',
                              'RAP_P', 'PPQ_P', 'DDP_P','Shimmer_P', 'Shimmer_dB_P', 'APQ3_P', 'APQ5_P',
                              'APQ_P', 'DDA_P', 'NHR_P', 'HNR_P', 'RPDE_P', 'DFA_P', 'spread1_P',
@@ -333,11 +387,17 @@ elif selected == "Parkinsons Prediction":
     with col_btn1:
         if st.button("Parkinson's Test Result", help="Click to get prediction"):
             try:
-                user_input = [fo, fhi, flo, Jitter_percent, Jitter_Abs,
-                              RAP, PPQ, DDP,Shimmer, Shimmer_dB, APQ3, APQ5,
-                              APQ, DDA, NHR, HNR, RPDE, DFA, spread1, spread2, D2, PPE]
+                user_input_dict = {
+                    'fo': fo, 'fhi': fhi, 'flo': flo, 'Jitter_percent': Jitter_percent, 
+                    'Jitter_Abs': Jitter_Abs, 'RAP': RAP, 'PPQ': PPQ, 'DDP': DDP, 
+                    'Shimmer': Shimmer, 'Shimmer_dB': Shimmer_dB, 'APQ3': APQ3, 
+                    'APQ5': APQ5, 'APQ': APQ, 'DDA': DDA, 'NHR': NHR, 
+                    'HNR': HNR, 'RPDE': RPDE, 'DFA': DFA, 'spread1': spread1, 
+                    'spread2': spread2, 'D2': D2, 'PPE': PPE
+                }
+                user_input_list = list(user_input_dict.values())
 
-                parkinsons_prediction = parkinsons_model.predict([user_input])
+                parkinsons_prediction = parkinsons_model.predict([user_input_list])
 
                 if parkinsons_prediction[0] == 1:
                     parkinsons_diagnosis = "The person has Parkinson's disease"
@@ -346,21 +406,8 @@ elif selected == "Parkinsons Prediction":
                 
                 st.success(parkinsons_diagnosis)
 
-                # --- Store prediction history ---
-                history_entry = {
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'inputs': {
-                        'fo': fo, 'fhi': fhi, 'flo': flo, 'Jitter_percent': Jitter_percent, 
-                        'Jitter_Abs': Jitter_Abs, 'RAP': RAP, 'PPQ': PPQ, 'DDP': DDP, 
-                        'Shimmer': Shimmer, 'Shimmer_dB': Shimmer_dB, 'APQ3': APQ3, 
-                        'APQ5': APQ5, 'APQ': APQ, 'DDA': DDA, 'NHR': NHR, 
-                        'HNR': HNR, 'RPDE': RPDE, 'DFA': DFA, 'spread1': spread1, 
-                        'spread2': spread2, 'D2': D2, 'PPE': PPE
-                    },
-                    'result': parkinsons_diagnosis
-                }
-                history_data['Parkinsons'].append(history_entry)
-                save_history(history_data)
+                # --- Store prediction history in DB ---
+                save_history(st.session_state.user_uuid, 'Parkinsons', user_input_dict, parkinsons_diagnosis)
 
             except Exception as e:
                 st.error(f"Please check your input values or ensure they are within a reasonable range. An error occurred: {e}")
@@ -373,117 +420,181 @@ elif selected == "Parkinsons Prediction":
 elif selected == 'Prediction History':
     st.title('Your Health Prediction History')
     st.markdown("Review your past prediction results and observe trends in your health data.")
+    st.write("This history is unique to this specific browser and device.")
 
     # Dropdown to select disease type
-    disease_to_show = st.selectbox(
-        "Select Disease to View History:",
-        ['Diabetes', 'Heart Disease', 'Parkinsons'],
-        key="history_disease_select"
-    )
+    # For history display, we need to load all history first, then filter for display
+    all_user_history = load_history(st.session_state.user_uuid)
+    
+    if not all_user_history:
+        st.info("No prediction history available for this device yet. Make some predictions first!")
+    else:
+        # Get unique disease types from the loaded history for the dropdown
+        unique_diseases = sorted(list(set([entry['Disease'] for entry in all_user_history])))
+        if not unique_diseases: # Fallback if no diseases yet (shouldn't happen with existing history)
+            unique_diseases = ['Diabetes', 'Heart Disease', 'Parkinsons']
 
-    if disease_to_show in history_data and history_data[disease_to_show]:
-        st.subheader(f"History for {disease_to_show}")
-        
-        # Convert history data to DataFrame for easier handling and display
-        df_history = pd.DataFrame(history_data[disease_to_show])
-        
-        # Convert 'timestamp' to datetime objects for plotting
-        df_history['timestamp'] = pd.to_datetime(df_history['timestamp'])
-        
-        # Display raw data
-        st.markdown("#### Raw Prediction Data")
-        st.dataframe(df_history[['timestamp', 'result', 'inputs']]) # Display inputs as a dictionary
-        
-        # --- Download Raw History Data ---
-        # Prepare data for download: flatten 'inputs' dictionary into separate columns
-        df_history_flat = df_history.copy()
-        df_history_flat = pd.concat([df_history_flat.drop('inputs', axis=1), df_history_flat['inputs'].apply(pd.Series)], axis=1)
 
-        csv_data = df_history_flat.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label=f"Download {disease_to_show} History Data as CSV",
-            data=csv_data,
-            file_name=f"{disease_to_show}_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime='text/csv',
-            help=f"Download all historical {disease_to_show} prediction data as a CSV file, including input parameters."
+        disease_to_show = st.selectbox(
+            "Select Disease to View History:",
+            unique_diseases,
+            key="history_disease_select"
         )
 
+        # Filter the loaded history based on user selection
+        filtered_history = [entry for entry in all_user_history if entry['Disease'] == disease_to_show]
 
-        st.markdown("#### Visual Trends (Input Parameters)")
+        if filtered_history:
+            st.subheader(f"History for {disease_to_show}")
+            
+            # Convert filtered history data to DataFrame for easier handling and display
+            df_history = pd.DataFrame(filtered_history)
+            
+            # Display raw data
+            st.markdown("#### Raw Prediction Data")
+            # Display inputs as a dictionary, ensure it's readable
+            st.dataframe(df_history[['Timestamp', 'Result', 'Inputs']]) 
+            
+            # --- Download Raw History Data ---
+            # Prepare data for download: flatten 'Inputs' dictionary into separate columns
+            df_history_flat = df_history.copy()
+            # Convert 'Inputs' column, which stores dicts, into separate columns
+            df_history_flat = pd.concat([df_history_flat.drop('Inputs', axis=1), df_history_flat['Inputs'].apply(pd.Series)], axis=1)
 
-        # --- Plotting logic based on disease type (Input Parameters) ---
-        df_plot = df_history.copy()
-        df_plot = df_plot.set_index('timestamp') # Set timestamp as index for plotting
-
-        if disease_to_show == 'Diabetes':
-            try:
-                # Safely extract numeric values, coercing errors to NaN and dropping
-                df_plot['Glucose'] = df_plot['inputs'].apply(lambda x: x.get('Glucose')).apply(pd.to_numeric, errors='coerce')
-                df_plot['BMI'] = df_plot['inputs'].apply(lambda x: x.get('BMI')).apply(pd.to_numeric, errors='coerce')
-                df_plot['BloodPressure'] = df_plot['inputs'].apply(lambda x: x.get('BloodPressure')).apply(pd.to_numeric, errors='coerce')
-
-                # Select only the columns for plotting and drop rows with any NaN values
-                df_plot_numeric = df_plot[['Glucose', 'BMI', 'BloodPressure']].dropna()
-                
-                if not df_plot_numeric.empty:
-                    st.line_chart(df_plot_numeric)
-                    st.caption("Trends in Glucose, BMI, and Blood Pressure over time.")
-                else:
-                    st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
-            except Exception as e:
-                st.warning(f"Could not generate input trend chart for Diabetes. Error: {e}")
-
-
-        elif disease_to_show == 'Heart Disease':
-            try:
-                df_plot['Cholesterol'] = df_plot['inputs'].apply(lambda x: x.get('chol')).apply(pd.to_numeric, errors='coerce')
-                df_plot['Thalach'] = df_plot['inputs'].apply(lambda x: x.get('thalach')).apply(pd.to_numeric, errors='coerce')
-                df_plot['RestingBP'] = df_plot['inputs'].apply(lambda x: x.get('trestbps')).apply(pd.to_numeric, errors='coerce')
-
-                df_plot_numeric = df_plot[['Cholesterol', 'Thalach', 'RestingBP']].dropna()
-                
-                if not df_plot_numeric.empty:
-                    st.line_chart(df_plot_numeric)
-                    st.caption("Trends in Cholesterol, Max Heart Rate, and Resting Blood Pressure over time.")
-                else:
-                    st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
-            except Exception as e:
-                st.warning(f"Could not generate input trend chart for Heart Disease. Error: {e}")
-
-        elif disease_to_show == 'Parkinsons':
-            try:
-                df_plot['HNR'] = df_plot['inputs'].apply(lambda x: x.get('HNR')).apply(pd.to_numeric, errors='coerce')
-                df_plot['Jitter_percent'] = df_plot['inputs'].apply(lambda x: x.get('Jitter_percent')).apply(pd.to_numeric, errors='coerce')
-                df_plot['Shimmer'] = df_plot['inputs'].apply(lambda x: x.get('Shimmer')).apply(pd.to_numeric, errors='coerce')
-
-                df_plot_numeric = df_plot[['HNR', 'Jitter_percent', 'Shimmer']].dropna()
-                
-                if not df_plot_numeric.empty:
-                    st.line_chart(df_plot_numeric)
-                    st.caption("Trends in HNR, Jitter, and Shimmer over time (voice parameters).")
-                else:
-                    st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
-            except Exception as e:
-                st.warning(f"Could not generate input trend chart for Parkinsons. Error: {e}")
-
-        # --- Prediction Outcome Status Report ---
-        st.markdown("#### Prediction Outcome Summary")
-        if not df_history.empty:
-            outcome_counts = df_history['result'].value_counts()
-            st.bar_chart(outcome_counts)
-            st.caption(f"Count of each prediction outcome for {disease_to_show}.")
-
-            # --- Download Outcome Summary Data ---
-            outcome_csv = outcome_counts.reset_index(name='Count').to_csv(index=False).encode('utf-8')
+            csv_data = df_history_flat.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label=f"Download {disease_to_show} Outcome Summary as CSV",
-                data=outcome_csv,
-                file_name=f"{disease_to_show}_outcome_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                label=f"Download {disease_to_show} History Data as CSV",
+                data=csv_data,
+                file_name=f"{disease_to_show}_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime='text/csv',
-                help=f"Download the summarized prediction outcomes for {disease_to_show}."
+                help=f"Download all historical {disease_to_show} prediction data as a CSV file, including input parameters."
             )
-        else:
-            st.info(f"No prediction outcomes to summarize for {disease_to_show} yet.")
 
-    else:
-        st.info(f"No prediction history available for {disease_to_show} yet. Make some predictions first!")
+
+            st.markdown("#### Visual Trends (Input Parameters)")
+
+            # --- Plotting logic based on disease type (Input Parameters) ---
+            df_plot = df_history.copy()
+            df_plot = df_plot.set_index('Timestamp') # Set timestamp as index for plotting
+
+            if disease_to_show == 'Diabetes':
+                try:
+                    # Safely extract numeric values from 'Inputs' dictionary, coercing errors to NaN and dropping
+                    df_plot['Glucose'] = df_plot['Inputs'].apply(lambda x: x.get('Glucose')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['BMI'] = df_plot['Inputs'].apply(lambda x: x.get('BMI')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['BloodPressure'] = df_plot['Inputs'].apply(lambda x: x.get('BloodPressure')).apply(pd.to_numeric, errors='coerce')
+
+                    # Select only the columns for plotting and drop rows with any NaN values
+                    df_plot_numeric = df_plot[['Glucose', 'BMI', 'BloodPressure']].dropna()
+                    
+                    if not df_plot_numeric.empty:
+                        st.line_chart(df_plot_numeric)
+                        st.caption("Trends in Glucose, BMI, and Blood Pressure over time.")
+                    else:
+                        st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
+                except Exception as e:
+                    st.warning(f"Could not generate input trend chart for Diabetes. Error: {e}")
+
+
+            elif disease_to_show == 'Heart Disease':
+                try:
+                    df_plot['Cholesterol'] = df_plot['Inputs'].apply(lambda x: x.get('chol')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['Thalach'] = df_plot['Inputs'].apply(lambda x: x.get('thalach')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['RestingBP'] = df_plot['Inputs'].apply(lambda x: x.get('trestbps')).apply(pd.to_numeric, errors='coerce')
+
+                    df_plot_numeric = df_plot[['Cholesterol', 'Thalach', 'RestingBP']].dropna()
+                    
+                    if not df_plot_numeric.empty:
+                        st.line_chart(df_plot_numeric)
+                        st.caption("Trends in Cholesterol, Max Heart Rate, and Resting Blood Pressure over time.")
+                    else:
+                        st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
+                except Exception as e:
+                    st.warning(f"Could not generate input trend chart for Heart Disease. Error: {e}")
+
+            elif disease_to_show == 'Parkinsons':
+                try:
+                    df_plot['HNR'] = df_plot['Inputs'].apply(lambda x: x.get('HNR')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['Jitter_percent'] = df_plot['Inputs'].apply(lambda x: x.get('Jitter_percent')).apply(pd.to_numeric, errors='coerce')
+                    df_plot['Shimmer'] = df_plot['Inputs'].apply(lambda x: x.get('Shimmer')).apply(pd.to_numeric, errors='coerce')
+
+                    df_plot_numeric = df_plot[['HNR', 'Jitter_percent', 'Shimmer']].dropna()
+                    
+                    if not df_plot_numeric.empty:
+                        st.line_chart(df_plot_numeric)
+                        st.caption("Trends in HNR, Jitter, and Shimmer over time (voice parameters).")
+                    else:
+                        st.info(f"Not enough valid numerical data for plotting for {disease_to_show} yet. Make more predictions.")
+                except Exception as e:
+                    st.warning(f"Could not generate input trend chart for Parkinsons. Error: {e}")
+
+            # --- Prediction Outcome Status Report ---
+            st.markdown("#### Prediction Outcome Summary")
+            if not df_history.empty:
+                outcome_counts = df_history['Result'].value_counts()
+                st.bar_chart(outcome_counts)
+                st.caption(f"Count of each prediction outcome for {disease_to_show}.")
+
+                # --- Download Outcome Summary Data ---
+                outcome_csv = outcome_counts.reset_index(name='Count').to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=f"Download {disease_to_show} Outcome Summary as CSV",
+                    data=outcome_csv,
+                    file_name=f"{disease_to_show}_outcome_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime='text/csv',
+                    help=f"Download the summarized prediction outcomes for {disease_to_show}."
+                )
+            else:
+                st.info(f"No prediction outcomes to summarize for {disease_to_show} yet.")
+
+        else:
+            st.info(f"No prediction history available for {disease_to_show} yet. Make some predictions first!")
+
+# --- Health Resources and Tips Page ---
+elif selected == 'Health Resources':
+    st.title('General Health Resources and Tips')
+    st.write("Here you'll find general information and tips to help maintain a healthy lifestyle and understand more about the diseases this app focuses on. Remember, this information is not a substitute for professional medical advice.")
+    
+    st.markdown("---")
+
+    st.subheader("General Health & Wellness")
+    st.markdown("""
+    - **Balanced Diet:** Focus on whole foods, fruits, vegetables, lean proteins, and healthy fats. Limit processed foods, sugary drinks, and excessive saturated/trans fats.
+    - **Regular Exercise:** Aim for at least 150 minutes of moderate-intensity aerobic activity or 75 minutes of vigorous-intensity activity per week, along with muscle-strengthening activities twice a week.
+    - **Adequate Sleep:** Prioritize 7-9 hours of quality sleep per night. Good sleep is crucial for physical and mental well-being.
+    - **Stress Management:** Practice stress-reducing techniques like meditation, yoga, deep breathing, or hobbies you enjoy.
+    - **Stay Hydrated:** Drink plenty of water throughout the day.
+    - **Avoid Smoking and Limit Alcohol:** These habits significantly increase the risk of numerous health problems.
+    - **Regular Check-ups:** Visit your doctor for routine physicals and screenings, even if you feel healthy. Early detection is key.
+    """)
+
+    st.subheader("Tips for Diabetes Management & Prevention")
+    st.markdown("""
+    - **Monitor Blood Sugar:** If you have diabetes, regularly check your blood glucose levels as advised by your doctor.
+    - **Carbohydrate Counting:** Learn about carbohydrates and how they affect blood sugar.
+    - **Portion Control:** Manage your food portions to maintain a healthy weight.
+    - **Fiber Intake:** Increase dietary fiber to help control blood sugar and improve digestion.
+    - **Regular Physical Activity:** Exercise helps improve insulin sensitivity.
+    - **Medication Adherence:** Take prescribed medications as directed by your healthcare provider.
+    """)
+
+    st.subheader("Tips for Heart Health")
+    st.markdown("""
+    - **Maintain Healthy Blood Pressure:** Regularly monitor your blood pressure and follow your doctor's recommendations for management (diet, exercise, medication).
+    - **Manage Cholesterol Levels:** Reduce intake of saturated and trans fats. Focus on foods that can lower cholesterol like oats, nuts, and fatty fish.
+    - **Healthy Weight:** Obesity is a major risk factor for heart disease.
+    - **Limit Sodium Intake:** High sodium can contribute to high blood pressure.
+    - **Omega-3 Fatty Acids:** Include sources like salmon, flaxseeds, and walnuts in your diet.
+    - **Quit Smoking:** Smoking is a leading cause of heart disease.
+    """)
+
+    st.subheader("Tips for Parkinson's Disease (General Information)")
+    st.markdown("""
+    - **Exercise:** Regular physical activity, including aerobic exercise, strength training, balance, and flexibility exercises, can help manage symptoms and improve mobility.
+    - **Balanced Diet:** While no specific diet cures Parkinson's, a balanced diet rich in fruits, vegetables, whole grains, and lean proteins can support overall health.
+    - **Speech Therapy:** Can help with voice changes and swallowing difficulties.
+    - **Occupational Therapy:** Can help adapt daily tasks and maintain independence.
+    - **Physical Therapy:** Focuses on improving balance, gait, and flexibility.
+    - **Medication Management:** Adhering to prescribed medications is crucial for symptom management.
+    """)
+    st.warning("Please remember that the information provided here is for general knowledge and informational purposes only, and does not constitute medical advice. Always consult with a qualified healthcare professional for personalized advice, diagnosis, or treatment regarding any medical condition.")
