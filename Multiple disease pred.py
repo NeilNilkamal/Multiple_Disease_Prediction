@@ -6,7 +6,6 @@ from datetime import datetime
 import pandas as pd
 import sqlite3 # Import for SQLite database
 import uuid # For generating unique IDs
-from datetime import datetime, timedelta # Import datetime and timedelta
 from streamlit_cookies_controller import CookieController # For managing browser cookies
 
 # --- Page Configuration ---
@@ -37,22 +36,14 @@ def get_db_connection():
     return conn
 
 # --- Initialize or Retrieve User UUID ---
+# --- Initialize or Retrieve User UUID ---
 def get_user_session_uuid():
     """
     Retrieves a unique UUID from browser cookies. If not found, generates a new one
     and sets it as a cookie. Stores it in session_state for easy access.
     """
     controller = CookieController()
-    
-    # Check if the cookie exists using 'in' operator or by trying to get it safely
-    # The 'streamlit_cookies_controller' might be designed to always raise KeyError if not found
-    # So, we'll wrap the access in a try-except block, which is robust.
-    session_uuid = None
-    try:
-        session_uuid = controller.get("user_health_app_uuid")
-    except KeyError:
-        # The cookie doesn't exist, so we'll generate a new one
-        pass # session_uuid will remain None, triggering the if not session_uuid block
+    session_uuid = controller.get("user_health_app_uuid") # Use a specific cookie name
 
     if not session_uuid:
         session_uuid = str(uuid.uuid4()) # Generate a new unique ID
@@ -62,6 +53,9 @@ def get_user_session_uuid():
         
         # Set the cookie using the 'expires' argument with a datetime object
         controller.set("user_health_app_uuid", session_uuid, expires=expires_date)
+        
+        # st.session_state.user_uuid = session_uuid # Store in session_state for current run
+    # Else, if session_uuid was retrieved from cookie, it's already set.
     
     # Always store in session_state so it's readily available throughout the current session
     st.session_state.user_uuid = session_uuid 
@@ -131,7 +125,7 @@ with st.sidebar:
                              'Heart Disease Prediction',
                              'Parkinsons Prediction',
                              'Prediction History',
-                             'Health Tips (General)'], # Added Health Resources
+                             'Health Resources'], # Added Health Resources
                             menu_icon='hospital-fill',
                             icons=['house', 'activity', 'heart', 'person', 'bar-chart-line', 'book'], # Added 'book' icon
                             default_index=0)
@@ -153,9 +147,9 @@ if selected == 'Home':
 
 
 # --- Diabetes Prediction Page ---
-elif selected == 'Diabetes':
+elif selected == 'Diabetes Prediction':
 
-    st.title('Diabetes Prediction')
+    st.title('Diabetes Prediction using ML')
 
     diabetes_input_keys = ['Pregnancies_D', 'Glucose_D', 'BloodPressure_D', 'SkinThickness_D',
                            'Insulin_D', 'BMI_D', 'DiabetesPedigreeFunction_D', 'Age_D']
@@ -225,9 +219,9 @@ elif selected == 'Diabetes':
 
 
 # --- Heart Disease Prediction Page ---
-elif selected == 'Heart Disease':
+elif selected == 'Heart Disease Prediction':
 
-    st.title('Heart Disease Prediction')
+    st.title('Heart Disease Prediction using ML')
 
     heart_input_keys = ['age_hd_D', 'sex_hd_D', 'cp_hd_D', 'trestbps_hd_D', 'chol_hd_D',
                         'fbs_hd_D', 'restecg_hd_D', 'thalach_hd_D', 'exang_hd_D',
@@ -308,9 +302,9 @@ elif selected == 'Heart Disease':
             clear_form_inputs(heart_input_keys)
 
 # --- Parkinson's Prediction Page ---
-elif selected == "Parkinson's":
+elif selected == "Parkinsons Prediction":
 
-    st.title("Parkinson's Disease Prediction")
+    st.title("Parkinson's Disease Prediction using ML")
 
     parkinsons_input_keys = ['fo_P', 'fhi_P', 'flo_P', 'Jitter_percent_P', 'Jitter_Abs_P',
                              'RAP_P', 'PPQ_P', 'DDP_P','Shimmer_P', 'Shimmer_dB_P', 'APQ3_P', 'APQ5_P',
@@ -556,7 +550,7 @@ elif selected == 'Prediction History':
             st.info(f"No prediction history available for {disease_to_show} yet. Make some predictions first!")
 
 # --- Health Resources and Tips Page ---
-elif selected == 'Health Tips (General)':
+elif selected == 'Health Resources':
     st.title('General Health Resources and Tips')
     st.write("Here you'll find general information and tips to help maintain a healthy lifestyle and understand more about the diseases this app focuses on. Remember, this information is not a substitute for professional medical advice.")
     
